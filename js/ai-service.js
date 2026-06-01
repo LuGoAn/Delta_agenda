@@ -22,7 +22,7 @@ export function resetChatContext() {
 function runOfflineParser(message) {
     const text = message.toLowerCase().trim();
     
-    // Check if we are in the middle of a multi-turn conversation
+    // Conversation state machine for Study content/days
     if (chatContext.step === 'awaiting_content') {
         chatContext.extractedData.studyContent = message;
         chatContext.step = 'awaiting_prep_days';
@@ -50,29 +50,46 @@ function runOfflineParser(message) {
         };
     }
 
-    // --- Start a new parsing flow ---
-    const now = new Date('2026-06-01T17:56:24-03:00'); // June 1, 2026 in this sandbox
+    // Greetings and Help triggers (Conversational Gatekeeper)
+    const greetings = ['olá', 'ola', 'oi', 'bom dia', 'boa tarde', 'boa noite', 'tudo bem', 'eae', 'e ai', 'opa', 'hello', 'hi', 'helo'];
+    const helpWords = ['ajuda', 'como funciona', 'como usar', 'o que você faz', 'o que voce faz', 'ajudar'];
+    
+    const isGreeting = greetings.some(g => text === g || text.startsWith(g + ' ') || text.endsWith(' ' + g));
+    const isHelp = helpWords.some(h => text.includes(h));
+    
+    if (isGreeting || isHelp) {
+        return {
+            success: true,
+            isComplete: false,
+            reply: 'Olá! Sou o seu Assistente Delta. 🧠\n\nPosso agendar seus compromissos e planejar suas tarefas preparatórias automaticamente para evitar sobrecarga!\n\nExperimente dizer algo como:\n• "Tenho prova de cálculo dia 20"\n• "Consulta médica amanhã"\n• "Apresentação de projeto dia 10"',
+            data: null
+        };
+    }
+
+    // Heuristic Date/Category indicators
+    const now = new Date('2026-06-01T17:56:24-03:00');
     const currentYear = now.getFullYear();
     const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
     
     let dateStr = '';
-    let category = 'Outro';
+    let category = '';
     let title = '';
 
-    // A. Detect Category
-    if (text.includes('prova') || text.includes('estudo') || text.includes('estudar') || text.includes('exame acad') || text.includes('teste')) {
+    // Detect Category with contextual keywords
+    if (text.includes('prova') || text.includes('estudo') || text.includes('estudar') || text.includes('exame acad') || (text.includes('teste') && text.length > 5)) {
         category = 'Estudo';
     } else if (text.includes('consulta') || text.includes('médic') || text.includes('dentista') || text.includes('exame méd') || text.includes('terapia')) {
         category = 'Consulta';
     } else if (text.includes('projeto') || text.includes('trabalho') || text.includes('apresenta') || text.includes('reuni') || text.includes('job')) {
         category = 'Trabalho';
-    } else if (text.includes('compromisso') || text.includes('pessoal') || text.includes('academia') || text.includes('aniversario') || text.includes('niver')) {
+    } else if (text.includes('compromisso') || text.includes('pessoal') || text.includes('academia') || text.includes('aniversario') || text.includes('niver') || text.includes('cortar')) {
         category = 'Pessoal';
     }
 
-    // B. Detect Date (Heuristics for "dia XX", "hoje", "amanhã")
+    // Detect Date indicators
     const dayRegex = /dia\s+(\d+)/i;
     const matchDay = text.match(dayRegex);
+    const hasDateIndicator = matchDay || text.includes('hoje') || text.includes('amanhã') || text.includes('amanha');
     
     if (matchDay) {
         const dayVal = String(matchDay[1]).padStart(2, '0');
@@ -81,12 +98,24 @@ function runOfflineParser(message) {
         dateStr = formatDate(now);
     } else if (text.includes('amanhã') || text.includes('amanha')) {
         dateStr = formatDate(addDays(formatDate(now), 1));
-    } else {
-        // Default to 7 days in the future if no date is specified
-        dateStr = formatDate(addDays(formatDate(now), 7));
     }
 
-    // C. Extract Title
+    // Gatekeeper fallback: If no clear scheduling category OR no date indicator was found,
+    // we assume the user is conversing and we ask for clarification instead of scheduling dummy data!
+    if (!category && !hasDateIndicator) {
+        return {
+            success: true,
+            isComplete: false,
+            reply: 'Não entendi muito bem. Você gostaria de agendar um compromisso? 📅\n\nPor favor, diga o que deseja agendar e a data (ex: "Academia amanhã" ou "Prova de Cálculo dia 20").',
+            data: null
+        };
+    }
+
+    // Fallbacks if only one of them is present
+    if (!category) category = 'Outro';
+    if (!dateStr) dateStr = formatDate(addDays(formatDate(now), 7)); // default 7 days ahead
+
+    // Extract Title based on category
     if (category === 'Estudo') {
         title = 'Prova';
         if (text.includes('matematica') || text.includes('matemática')) title = 'Prova de Matemática';
@@ -103,23 +132,20 @@ function runOfflineParser(message) {
         if (text.includes('projeto')) title = 'Apresentação de Projeto';
         else if (text.includes('reunião') || text.includes('reuniao')) title = 'Reunião de Trabalho';
     } else {
-        // Capitalize first letter of message as fallback title
         title = message.charAt(0).toUpperCase() + message.slice(1);
         if (title.length > 30) title = title.substring(0, 27) + '...';
     }
 
-    // D. Build data structure
     chatContext.extractedData = {
         title,
         date: dateStr,
-        time: '14:00', // standard fallback time
+        time: '14:00',
         description: `Agendado via Assistente Inteligente Delta: "${message}"`,
         category,
-        prepDays: 3, // fallback
+        prepDays: 3,
         studyContent: ''
     };
 
-    // E. Decide follow-up questions
     if (category === 'Estudo') {
         chatContext.step = 'awaiting_content';
         return {
@@ -163,34 +189,35 @@ function runOfflineParser(message) {
 
 // 2. LIVE LOCAL LLM CONNECTOR (Ollama / KoboldCPP compatible)
 async function runLocalLLM(message, settings) {
-    const provider = settings.aiProvider || 'ollama'; // 'ollama' or 'kobold'
+    const provider = settings.aiProvider || 'ollama';
     const apiUrl = settings.aiUrl || 'http://localhost:11434';
     const model = settings.aiModel || 'llama3.1';
     
     const now = new Date('2026-06-01T17:56:24-03:00');
     const currentDateStr = formatDate(now);
 
-    const systemPrompt = `Você é o interpretador de linguagem natural do aplicativo "Delta".
-Seu objetivo é extrair parâmetros para agendar um compromisso a partir da mensagem do usuário.
-A data atual de hoje é ${currentDateStr} (Segunda-feira).
+    const systemPrompt = `Você é o interpretador de linguagem natural da agenda inteligente "Delta".
+Seu objetivo primário é identificar se o usuário deseja agendar um compromisso (isSchedulingIntent: true) ou se está apenas cumprimentando, fazendo uma pergunta geral ou batendo papo (isSchedulingIntent: false).
 
-Você DEVE responder UNICAMENTE no formato JSON válido abaixo, sem texto complementar, marcadores de markdown ou explicações.
+A data de hoje é ${currentDateStr} (Segunda-feira).
 
-Estrutura do JSON esperada:
+Você DEVE responder UNICAMENTE no formato JSON válido abaixo, sem textos extras ou blocos de markdown.
+
+Estrutura JSON:
 {
-  "title": "Título resumido do evento",
-  "date": "Data no formato YYYY-MM-DD",
-  "category": "Escolha entre: Estudo, Trabalho, Consulta, Pessoal, Outro",
-  "studyContent": "Se for Estudo, quais conteúdos estudar (string vazia se não especificado)",
-  "prepDays": 3 // Número inteiro de dias de antecedência para estudar (padrão 3 se for Estudo)
+  "isSchedulingIntent": true ou false,
+  "reply": "Caso isSchedulingIntent seja false, escreva aqui uma resposta amigavel e prestativa respondendo ao cumprimento ou duvida do usuario, explicando como ele pode agendar compromissos. Se for true, deixe vazio (string vazia).",
+  "title": "Caso seja agendamento, titulo resumido e elegante do evento (ex: Prova de Matematica, Consulta Cardiologista, Apresentacao de Projeto). Vazio se nao for agendamento.",
+  "date": "Caso seja agendamento, data no formato YYYY-MM-DD. Vazio se nao for agendamento.",
+  "category": "Caso seja agendamento, escolha obrigatoriamente entre: Estudo, Trabalho, Consulta, Pessoal, Outro. Vazio se nao.",
+  "studyContent": "Se for Estudo, quais conteudos especificos estudar (vazio se nao especificado)",
+  "prepDays": 3 // Numero inteiro de dias de antecedencia para tarefas preparatorias (padrao 3 se for Estudo)
 }
 
-Exemplos de extrações:
-- "Tenho prova de matemática dia 20" -> {"title": "Prova de Matemática", "date": "2026-06-20", "category": "Estudo", "studyContent": "", "prepDays": 3}
-- "Consulta dentista dia 15" -> {"title": "Consulta Dentista", "date": "2026-06-15", "category": "Consulta", "studyContent": "", "prepDays": 0}
-- "Apresentação de projeto dia 10" -> {"title": "Apresentação de Projeto", "date": "2026-06-10", "category": "Trabalho", "studyContent": "", "prepDays": 0}
-
-Mensagem do Usuário: "${message}"`;
+Diretrizes importantes:
+1. Se o usuario disser coisas como "Ola", "Oi", "Tudo bem?", "Como funciona?", retorne isSchedulingIntent = false, e escreva uma resposta amigavel no campo "reply".
+2. Se o usuario pedir para agendar (ex: "tenho prova dia 20" ou "consulta medica amanha"), retorne isSchedulingIntent = true, e extraia os campos title, date e category corretamente.
+3. Se a mensagem for vaga, sem sentido ou apenas texto aleatorio (ex: "teste", "asd"), retorne isSchedulingIntent = false, e escreva no "reply" que nao entendeu e instrua amigavelmente como agendar.`;
 
     try {
         let response;
@@ -211,22 +238,20 @@ Mensagem do Usuário: "${message}"`;
                     options: {
                         temperature: 0.1
                     },
-                    format: 'json' // Enforce JSON format in Ollama!
+                    format: 'json'
                 })
             });
             
             if (!response.ok) throw new Error(`HTTP status: ${response.status}`);
             const resData = await response.json();
-            
-            // Ollama stores completion in 'response'
             const parsed = JSON.parse(resData.response.trim());
             return processLLMResult(parsed, message);
             
         } else {
-            // KoboldCPP OpenAI compatible endpoint
-            const endpoint = `${apiUrl.replace(/\/$/, '')}/v1/chat/completions`;
+            const endpoint = `${apiUrl.replace(/\/$/, '')}/v1/v1/chat/completions`; // fixed endpoint
+            const correctEndpoint = `${apiUrl.replace(/\/$/, '')}/v1/chat/completions`;
             
-            response = await fetch(endpoint, {
+            response = await fetch(correctEndpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -238,14 +263,12 @@ Mensagem do Usuário: "${message}"`;
                         { role: 'user', content: systemPrompt }
                     ],
                     temperature: 0.1,
-                    response_format: { type: 'json_object' } // Enforce JSON if supported
+                    response_format: { type: 'json_object' }
                 })
             });
             
             if (!response.ok) throw new Error(`HTTP status: ${response.status}`);
             const resData = await response.json();
-            
-            // KoboldCPP returns OpenAI structure
             const content = resData.choices[0].message.content.trim();
             const parsed = JSON.parse(content);
             return processLLMResult(parsed, message);
@@ -253,7 +276,6 @@ Mensagem do Usuário: "${message}"`;
         
     } catch (err) {
         console.error('Erro na chamada da IA Local, caindo de volta na Heurística:', err);
-        // Fallback automatically to heuristic if connection fails
         return {
             ...runOfflineParser(message),
             isFallback: true,
@@ -264,10 +286,21 @@ Mensagem do Usuário: "${message}"`;
 
 // Post-process the extracted parameters from LLM and format nicely
 function processLLMResult(parsed, originalMessage) {
-    // Basic defaults
     const now = new Date('2026-06-01T17:56:24-03:00');
     const currentYear = now.getFullYear();
     const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+
+    // Check if it is a scheduling intent
+    const isSchedulingIntent = parsed.isSchedulingIntent === true;
+    
+    if (!isSchedulingIntent) {
+        return {
+            success: true,
+            isComplete: false, // does not schedule
+            reply: parsed.reply || 'Não entendi muito bem. Como posso te ajudar hoje? 📅\n\nTente dizer algo como "Tenho prova de cálculo dia 20".',
+            data: null
+        };
+    }
 
     let title = parsed.title || 'Compromisso';
     let date = parsed.date || `${currentYear}-${currentMonth}-08`;
@@ -275,13 +308,11 @@ function processLLMResult(parsed, originalMessage) {
     let prepDays = parseInt(parsed.prepDays) || 3;
     let studyContent = parsed.studyContent || '';
 
-    // Validate category
     const validCategories = ['Estudo', 'Trabalho', 'Consulta', 'Pessoal', 'Outro'];
     if (!validCategories.includes(category)) {
         category = 'Outro';
     }
 
-    // Structure compiled data
     const extracted = {
         title,
         date,
@@ -292,8 +323,6 @@ function processLLMResult(parsed, originalMessage) {
         studyContent
     };
 
-    // If it's a study event, but studyContent or prepDays was not filled by user's first prompt,
-    // trigger the multi-turn dialog context!
     if (category === 'Estudo' && (!studyContent || !prepDays)) {
         chatContext.extractedData = extracted;
         chatContext.step = 'awaiting_content';
@@ -305,7 +334,6 @@ function processLLMResult(parsed, originalMessage) {
         };
     }
 
-    // Complete flow
     return {
         success: true,
         isComplete: true,
@@ -316,16 +344,13 @@ function processLLMResult(parsed, originalMessage) {
 
 // Main process message endpoint
 export async function processMessage(message, settings = {}) {
-    // If we are in active multi-turn heuristic questioning, ignore LLM connection and finish the dialog offline
     if (chatContext.step !== 'idle') {
         return runOfflineParser(message);
     }
 
-    // If real local AI is active in settings, run it!
     if (settings.aiEnabled) {
         return await runLocalLLM(message, settings);
     }
 
-    // Otherwise, run offline heuristic rule-engine
     return runOfflineParser(message);
 }

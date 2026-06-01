@@ -406,6 +406,7 @@ function resetChatContext() {
 function runOfflineParser(message) {
     const text = message.toLowerCase().trim();
     
+    // 1. Conversation state machine for Study content/days
     if (chatContext.step === 'awaiting_content') {
         chatContext.extractedData.studyContent = message;
         chatContext.step = 'awaiting_prep_days';
@@ -433,26 +434,46 @@ function runOfflineParser(message) {
         };
     }
 
+    // 2. Greetings and Help triggers (Conversational Gatekeeper)
+    const greetings = ['olá', 'ola', 'oi', 'bom dia', 'boa tarde', 'boa noite', 'tudo bem', 'eae', 'e ai', 'opa', 'hello', 'hi', 'helo'];
+    const helpWords = ['ajuda', 'como funciona', 'como usar', 'o que você faz', 'o que voce faz', 'ajudar'];
+    
+    const isGreeting = greetings.some(g => text === g || text.startsWith(g + ' ') || text.endsWith(' ' + g));
+    const isHelp = helpWords.some(h => text.includes(h));
+    
+    if (isGreeting || isHelp) {
+        return {
+            success: true,
+            isComplete: false,
+            reply: 'Olá! Sou o seu Assistente Delta. 🧠\n\nPosso agendar seus compromissos e planejar suas tarefas preparatórias automaticamente para evitar sobrecarga!\n\nExperimente dizer algo como:\n• "Tenho prova de cálculo dia 20"\n• "Consulta médica amanhã"\n• "Apresentação de projeto dia 10"',
+            data: null
+        };
+    }
+
+    // 3. Heuristic Date/Category indicators
     const now = new Date('2026-06-01T17:56:24-03:00');
     const currentYear = now.getFullYear();
     const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
     
     let dateStr = '';
-    let category = 'Outro';
+    let category = '';
     let title = '';
 
-    if (text.includes('prova') || text.includes('estudo') || text.includes('estudar') || text.includes('exame acad') || text.includes('teste')) {
+    // Detect Category with contextual keywords
+    if (text.includes('prova') || text.includes('estudo') || text.includes('estudar') || text.includes('exame acad') || (text.includes('teste') && text.length > 5)) {
         category = 'Estudo';
     } else if (text.includes('consulta') || text.includes('médic') || text.includes('dentista') || text.includes('exame méd') || text.includes('terapia')) {
         category = 'Consulta';
     } else if (text.includes('projeto') || text.includes('trabalho') || text.includes('apresenta') || text.includes('reuni') || text.includes('job')) {
         category = 'Trabalho';
-    } else if (text.includes('compromisso') || text.includes('pessoal') || text.includes('academia') || text.includes('aniversario') || text.includes('niver')) {
+    } else if (text.includes('compromisso') || text.includes('pessoal') || text.includes('academia') || text.includes('aniversario') || text.includes('niver') || text.includes('cortar')) {
         category = 'Pessoal';
     }
 
+    // Detect Date indicators
     const dayRegex = /dia\s+(\d+)/i;
     const matchDay = text.match(dayRegex);
+    const hasDateIndicator = matchDay || text.includes('hoje') || text.includes('amanhã') || text.includes('amanha');
     
     if (matchDay) {
         const dayVal = String(matchDay[1]).padStart(2, '0');
@@ -461,10 +482,24 @@ function runOfflineParser(message) {
         dateStr = formatDate(now);
     } else if (text.includes('amanhã') || text.includes('amanha')) {
         dateStr = formatDate(addDays(formatDate(now), 1));
-    } else {
-        dateStr = formatDate(addDays(formatDate(now), 7));
     }
 
+    // Gatekeeper fallback: If no clear scheduling category OR no date indicator was found,
+    // we assume the user is conversing and we ask for clarification instead of scheduling dummy data!
+    if (!category && !hasDateIndicator) {
+        return {
+            success: true,
+            isComplete: false,
+            reply: 'Não entendi muito bem. Você gostaria de agendar um compromisso? 📅\n\nPor favor, diga o que deseja agendar e a data (ex: "Academia amanhã" ou "Prova de Cálculo dia 20").',
+            data: null
+        };
+    }
+
+    // Fallbacks if only one of them is present
+    if (!category) category = 'Outro';
+    if (!dateStr) dateStr = formatDate(addDays(formatDate(now), 7)); // default 7 days ahead
+
+    // Extract Title based on category
     if (category === 'Estudo') {
         title = 'Prova';
         if (text.includes('matematica') || text.includes('matemática')) title = 'Prova de Matemática';
@@ -544,27 +579,28 @@ async function runLocalLLM(message, settings) {
     const now = new Date('2026-06-01T17:56:24-03:00');
     const currentDateStr = formatDate(now);
 
-    const systemPrompt = `Você é o interpretador de linguagem natural do aplicativo "Delta".
-Seu objetivo é extrair parâmetros para agendar um compromisso a partir da mensagem do usuário.
-A data atual de hoje é ${currentDateStr} (Segunda-feira).
+    const systemPrompt = `Você é o interpretador de linguagem natural da agenda inteligente "Delta".
+Seu objetivo primário é identificar se o usuário deseja agendar um compromisso (isSchedulingIntent: true) ou se está apenas cumprimentando, fazendo uma pergunta geral ou batendo papo (isSchedulingIntent: false).
 
-Você DEVE responder UNICAMENTE no formato JSON válido abaixo, sem texto complementar, marcadores de markdown ou explicações.
+A data de hoje é ${currentDateStr} (Segunda-feira).
 
-Estrutura do JSON esperada:
+Você DEVE responder UNICAMENTE no formato JSON válido abaixo, sem textos extras ou blocos de markdown.
+
+Estrutura JSON:
 {
-  "title": "Título resumido do evento",
-  "date": "Data no formato YYYY-MM-DD",
-  "category": "Escolha entre: Estudo, Trabalho, Consulta, Pessoal, Outro",
-  "studyContent": "Se for Estudo, quais conteúdos estudar (string vazia se não especificado)",
-  "prepDays": 3 // Número inteiro de dias de antecedência para estudar (padrão 3 se for Estudo)
+  "isSchedulingIntent": true ou false,
+  "reply": "Caso isSchedulingIntent seja false, escreva aqui uma resposta amigavel e prestativa respondendo ao cumprimento ou duvida do usuario, explicando como ele pode agendar compromissos. Se for true, deixe vazio (string vazia).",
+  "title": "Caso seja agendamento, titulo resumido e elegante do evento (ex: Prova de Matematica, Consulta Cardiologista, Apresentacao de Projeto). Vazio se nao for agendamento.",
+  "date": "Caso seja agendamento, data no formato YYYY-MM-DD. Vazio se nao for agendamento.",
+  "category": "Caso seja agendamento, escolha obrigatoriamente entre: Estudo, Trabalho, Consulta, Pessoal, Outro. Vazio se nao.",
+  "studyContent": "Se for Estudo, quais conteudos especificos estudar (vazio se nao especificado)",
+  "prepDays": 3 // Numero inteiro de dias de antecedencia para tarefas preparatorias (padrao 3 se for Estudo)
 }
 
-Exemplos de extrações:
-- "Tenho prova de matemática dia 20" -> {"title": "Prova de Matemática", "date": "2026-06-20", "category": "Estudo", "studyContent": "", "prepDays": 3}
-- "Consulta dentista dia 15" -> {"title": "Consulta Dentista", "date": "2026-06-15", "category": "Consulta", "studyContent": "", "prepDays": 0}
-- "Apresentação de projeto dia 10" -> {"title": "Apresentação de Projeto", "date": "2026-06-10", "category": "Trabalho", "studyContent": "", "prepDays": 0}
-
-Mensagem do Usuário: "${message}"`;
+Diretrizes importantes:
+1. Se o usuario disser coisas como "Ola", "Oi", "Tudo bem?", "Como funciona?", retorne isSchedulingIntent = false, e escreva uma resposta amigavel no campo "reply".
+2. Se o usuario pedir para agendar (ex: "tenho prova dia 20" ou "consulta medica amanha"), retorne isSchedulingIntent = true, e extraia os campos title, date e category corretamente.
+3. Se a mensagem for vaga, sem sentido ou apenas texto aleatorio (ex: "teste", "asd"), retorne isSchedulingIntent = false, e escreva no "reply" que nao entendeu e instrua amigavelmente como agendar.`;
 
     try {
         let response;
@@ -634,6 +670,18 @@ function processLLMResult(parsed, originalMessage) {
     const now = new Date('2026-06-01T17:56:24-03:00');
     const currentYear = now.getFullYear();
     const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+
+    // Check if it is a scheduling intent
+    const isSchedulingIntent = parsed.isSchedulingIntent === true;
+    
+    if (!isSchedulingIntent) {
+        return {
+            success: true,
+            isComplete: false, // does not schedule
+            reply: parsed.reply || 'Não entendi muito bem. Como posso te ajudar hoje? 📅\n\nTente dizer algo como "Tenho prova de cálculo dia 20".',
+            data: null
+        };
+    }
 
     let title = parsed.title || 'Compromisso';
     let date = parsed.date || `${currentYear}-${currentMonth}-08`;
