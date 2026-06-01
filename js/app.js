@@ -575,7 +575,8 @@ Mensagem do Usuário: "${message}"`;
             response = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'ngrok-skip-browser-warning': 'true'
                 },
                 body: JSON.stringify({
                     model: model,
@@ -599,7 +600,8 @@ Mensagem do Usuário: "${message}"`;
             response = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'ngrok-skip-browser-warning': 'true'
                 },
                 body: JSON.stringify({
                     model: model,
@@ -1410,7 +1412,10 @@ function setupSettingsListeners() {
         try {
             if (provider === 'ollama') {
                 const response = await fetch(`${url.replace(/\/$/, '')}/api/tags`, {
-                    method: 'GET'
+                    method: 'GET',
+                    headers: {
+                        'ngrok-skip-browser-warning': 'true'
+                    }
                 });
                 
                 if (response.ok) {
@@ -1430,7 +1435,10 @@ function setupSettingsListeners() {
                 }
             } else {
                 const response = await fetch(`${url.replace(/\/$/, '')}/v1/models`, {
-                    method: 'GET'
+                    method: 'GET',
+                    headers: {
+                        'ngrok-skip-browser-warning': 'true'
+                    }
                 });
                 
                 if (response.ok) {
