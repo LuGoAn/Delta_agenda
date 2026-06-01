@@ -576,7 +576,7 @@ Mensagem do Usuário: "${message}"`;
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'ngrok-skip-browser-warning': 'true'
+                    'Accept': 'application/json'
                 },
                 body: JSON.stringify({
                     model: model,
@@ -601,7 +601,7 @@ Mensagem do Usuário: "${message}"`;
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'ngrok-skip-browser-warning': 'true'
+                    'Accept': 'application/json'
                 },
                 body: JSON.stringify({
                     model: model,
@@ -1414,7 +1414,7 @@ function setupSettingsListeners() {
                 const response = await fetch(`${url.replace(/\/$/, '')}/api/tags`, {
                     method: 'GET',
                     headers: {
-                        'ngrok-skip-browser-warning': 'true'
+                        'Accept': 'application/json'
                     }
                 });
                 
@@ -1437,7 +1437,7 @@ function setupSettingsListeners() {
                 const response = await fetch(`${url.replace(/\/$/, '')}/v1/models`, {
                     method: 'GET',
                     headers: {
-                        'ngrok-skip-browser-warning': 'true'
+                        'Accept': 'application/json'
                     }
                 });
                 
