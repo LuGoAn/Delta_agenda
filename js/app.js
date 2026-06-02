@@ -450,6 +450,131 @@ function runOfflineParser(message) {
         };
     }
 
+    // Check for deletion/clear actions
+    if (text.includes('apagar') || text.includes('excluir') || text.includes('remover') || text.includes('limpar')) {
+        let action = { type: 'none' };
+        let reply = '';
+        
+        // Detect Date in the message (ex: "dia 10", "dia 5", "amanhã")
+        const now = new Date('2026-06-01T17:56:24-03:00');
+        const currentYear = now.getFullYear();
+        const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+        let parsedDate = '';
+        
+        const dayRegex = /dia\s+(\d+)/i;
+        const matchDay = text.match(dayRegex);
+        if (matchDay) {
+            const dayVal = String(matchDay[1]).padStart(2, '0');
+            parsedDate = `${currentYear}-${currentMonth}-${dayVal}`;
+        } else if (text.includes('hoje')) {
+            parsedDate = formatDate(now);
+        } else if (text.includes('amanhã') || text.includes('amanha')) {
+            parsedDate = formatDate(addDays(formatDate(now), 1));
+        }
+        
+        // Classify delete actions
+        if (text.includes('provas') || text.includes('estudos') || text.includes('estudo') || (text.includes('prova') && !parsedDate)) {
+            action = { type: 'delete_category', targetCategory: 'Estudo' };
+            reply = 'Entendido! Removi todas as provas e planos de estudos da sua agenda.';
+        } else if (text.includes('consultas') || text.includes('consulta') || text.includes('médico') || text.includes('dentista')) {
+            action = { type: 'delete_category', targetCategory: 'Consulta' };
+            reply = 'Entendido! Removi todas as consultas médicas da sua agenda.';
+        } else if (text.includes('tudo') || text.includes('agenda completa') || text.includes('limpar tudo')) {
+            action = { type: 'delete_all' };
+            reply = 'Entendido! Limpei toda a sua agenda de compromissos.';
+        } else if (parsedDate) {
+            let targetTitle = '';
+            if (text.includes('prova')) targetTitle = 'prova';
+            else if (text.includes('consulta')) targetTitle = 'consulta';
+            else if (text.includes('trabalho') || text.includes('apresentação') || text.includes('apresentacao')) targetTitle = 'apresentação';
+            else {
+                // e.g. "apague o cortar o cabelo do dia 5"
+                const matchTitle = text.match(/(?:apagar|excluir|remover|limpar)\s+(?:o|a|os|as)?\s*(.*?)\s*(?:do\s+)?dia/i);
+                if (matchTitle && matchTitle[1] && !matchTitle[1].includes('compromisso') && !matchTitle[1].includes('evento')) {
+                    targetTitle = matchTitle[1].trim();
+                }
+            }
+            
+            if (targetTitle) {
+                action = { type: 'delete_event', targetTitle: targetTitle, targetDate: parsedDate };
+                const dayLabel = parsedDate.split('-')[2];
+                reply = `Entendido! Excluí o compromisso contendo "${targetTitle}" agendado para o dia ${dayLabel}.`;
+            } else {
+                action = { type: 'delete_day', targetDate: parsedDate };
+                const dayLabel = parsedDate.split('-')[2];
+                reply = `Entendido! Removi todos os compromissos agendados para o dia ${dayLabel}.`;
+            }
+        } else {
+            // Check for months: "junho", "julho", etc.
+            const monthsMap = {
+                'janeiro': 1, 'fevereiro': 2, 'março': 3, 'marco': 3, 'abril': 4, 'maio': 5, 'junho': 6,
+                'julho': 7, 'agosto': 8, 'setembro': 9, 'outubro': 10, 'novembro': 11, 'dezembro': 12
+            };
+            
+            let foundMonth = null;
+            for (const [mName, mVal] of Object.entries(monthsMap)) {
+                if (text.includes(mName)) {
+                    foundMonth = { name: mName, val: mVal };
+                    break;
+                }
+            }
+            
+            if (foundMonth) {
+                action = { type: 'delete_month', targetMonth: foundMonth.val, targetYear: 2026 };
+                reply = `Entendido! Excluí todos os compromissos do mês de ${foundMonth.name.charAt(0).toUpperCase() + foundMonth.name.slice(1)} de 2026.`;
+            } else {
+                let targetTitle = text
+                    .replace('apagar', '')
+                    .replace('excluir', '')
+                    .replace('remover', '')
+                    .replace('limpar', '')
+                    .replace('o evento', '')
+                    .replace('a prova', '')
+                    .replace('a consulta', '')
+                    .trim();
+                if (targetTitle.length > 2) {
+                    action = { type: 'delete_event', targetTitle: targetTitle };
+                    reply = `Entendido! Excluí todos os eventos contendo "${targetTitle}" da sua agenda.`;
+                }
+            }
+        }
+        
+        if (action.type !== 'none') {
+            return {
+                success: true,
+                isComplete: false,
+                reply: reply,
+                data: null,
+                chatAction: action
+            };
+        }
+    }
+
+    // Check for completion action
+    if (text.includes('concluir') || text.includes('concluido') || text.includes('concluído') || text.includes('feito') || text.includes('marcar feito') || text.includes('marcar como feito')) {
+        let targetTitle = text
+            .replace('concluir', '')
+            .replace('concluido', '')
+            .replace('concluído', '')
+            .replace('feito', '')
+            .replace('marcar feito', '')
+            .replace('marcar como feito', '')
+            .replace('a prova de', '')
+            .replace('o evento', '')
+            .replace('a tarefa', '')
+            .trim();
+            
+        if (targetTitle.length > 2) {
+            return {
+                success: true,
+                isComplete: false,
+                reply: `Entendido! Marquei os compromissos relacionados a "${targetTitle}" como concluídos!`,
+                data: null,
+                chatAction: { type: 'complete_event', targetTitle: targetTitle }
+            };
+        }
+    }
+
     // 3. Heuristic Date/Category indicators
     const now = new Date('2026-06-01T17:56:24-03:00');
     const currentYear = now.getFullYear();
@@ -1377,6 +1502,87 @@ function renderChatMessages() {
     chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
+function executeChatAction(username, action) {
+    if (!action || action.type === 'none') return 0;
+    
+    const events = getUserEvents(username);
+    let count = 0;
+    
+    if (action.type === 'delete_category') {
+        const category = action.targetCategory;
+        const filtered = events.filter(e => e.category !== category);
+        count = events.length - filtered.length;
+        saveUserEvents(username, filtered);
+    } 
+    else if (action.type === 'delete_month') {
+        const monthStr = String(action.targetMonth).padStart(2, '0');
+        const yearStr = String(action.targetYear || 2026);
+        const filtered = events.filter(e => {
+            const parts = e.date.split('-');
+            return !(parts[0] === yearStr && parts[1] === monthStr);
+        });
+        count = events.length - filtered.length;
+        saveUserEvents(username, filtered);
+    }
+    else if (action.type === 'delete_day') {
+        const targetDate = action.targetDate;
+        const filtered = events.filter(e => e.date !== targetDate);
+        count = events.length - filtered.length;
+        saveUserEvents(username, filtered);
+    }
+    else if (action.type === 'delete_event') {
+        const title = (action.targetTitle || '').toLowerCase().trim();
+        const targetDate = action.targetDate;
+        
+        let filtered = events;
+        if (targetDate) {
+            filtered = events.filter(e => {
+                const matchTitle = e.title.toLowerCase().includes(title);
+                const matchDate = e.date === targetDate;
+                return !(matchTitle && matchDate);
+            });
+        } else {
+            filtered = events.filter(e => !e.title.toLowerCase().includes(title));
+        }
+        
+        count = events.length - filtered.length;
+        saveUserEvents(username, filtered);
+    }
+    else if (action.type === 'delete_all') {
+        count = events.length;
+        saveUserEvents(username, []);
+    }
+    else if (action.type === 'complete_event') {
+        const title = (action.targetTitle || '').toLowerCase().trim();
+        let found = false;
+        
+        events.forEach(e => {
+            if (e.title.toLowerCase().includes(title)) {
+                e.completed = true;
+                if (e.prepTasks) e.prepTasks.forEach(t => t.completed = true);
+                found = true;
+                count++;
+            } else {
+                if (e.prepTasks) {
+                    e.prepTasks.forEach(t => {
+                        if (t.title.toLowerCase().includes(title)) {
+                            t.completed = true;
+                            found = true;
+                            count++;
+                        }
+                    });
+                }
+            }
+        });
+        
+        if (found) {
+            saveUserEvents(username, events);
+        }
+    }
+    
+    return count;
+}
+
 function setupChatListeners() {
     const form = $('#chat-input-form');
     const input = $('#chat-input');
@@ -1407,6 +1613,12 @@ function setupChatListeners() {
                     renderCalendar();
                     renderDayAgenda();
                     renderDashboardStats();
+                } else if (aiResponse.chatAction && aiResponse.chatAction.type !== 'none') {
+                    executeChatAction(activeUser, aiResponse.chatAction);
+                    renderCalendar();
+                    renderDayAgenda();
+                    renderDashboardStats();
+                    document.dispatchEvent(new CustomEvent('delta-data-changed'));
                 }
             } else {
                 chatHistory.push({ sender: 'bot', text: 'Desculpe, ocorreu uma inconsistência ao processar seu pedido. Pode repetir com outros termos?' });

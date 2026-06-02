@@ -469,7 +469,14 @@ function processLLMResult(parsed, originalMessage) {
 
 // Main process message endpoint
 export async function processMessage(message, settings = {}) {
-    if (chatContext.step !== 'idle') {
+    const text = message.toLowerCase().trim();
+    
+    // Se for ação de deletar/limpar ou de concluir/marcar feito, interceptamos
+    // para processar offline com 100% de acerto instantaneamente.
+    const isDeleteAction = text.includes('apagar') || text.includes('excluir') || text.includes('remover') || text.includes('limpar');
+    const isCompleteAction = text.includes('concluir') || text.includes('concluido') || text.includes('concluído') || text.includes('feito');
+
+    if (chatContext.step !== 'idle' || isDeleteAction || isCompleteAction) {
         return runOfflineParser(message);
     }
 
