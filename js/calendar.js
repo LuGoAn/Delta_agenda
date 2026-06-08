@@ -5,6 +5,14 @@
 import { $, $$, formatDate, formatLocalDate, formatLocalDateShort, generateUUID } from './utils.js';
 import { getUserEvents, createManualEvent, updateEvent, deleteEvent, toggleEventStatus } from './scheduler.js';
 
+function getVirtualToday() {
+    const realToday = new Date();
+    if (realToday.getFullYear() === 2026 && realToday.getMonth() === 5) {
+        return realToday;
+    }
+    return new Date('2026-06-01T17:56:24-03:00');
+}
+
 // Calendar State
 let currentYear, currentMonth; // Month index (0-11)
 let selectedDateStr; // "YYYY-MM-DD"
@@ -20,7 +28,7 @@ export function initCalendar(username) {
     activeUser = username;
     
     // Set initially to June 2026 (presentation month)
-    const baseDate = new Date('2026-06-01T17:56:24-03:00');
+    const baseDate = getVirtualToday();
     currentYear = baseDate.getFullYear();
     currentMonth = baseDate.getMonth();
     
@@ -52,7 +60,7 @@ function setupCalendarListeners() {
     });
 
     $('#today-btn').addEventListener('click', () => {
-        const today = new Date('2026-06-01T17:56:24-03:00');
+        const today = getVirtualToday();
         currentYear = today.getFullYear();
         currentMonth = today.getMonth();
         selectedDateStr = formatDate(today);
@@ -176,8 +184,8 @@ function createDayElement(dayNum, dateStr, isAdjacent, container, events) {
         dayDiv.classList.add('selected');
     }
 
-    // Check if it's the current date (mocked presentation date June 1, 2026)
-    if (dateStr === '2026-06-01') {
+    // Check if it's the current date
+    if (dateStr === formatDate(getVirtualToday())) {
         dayDiv.classList.add('today-marker');
     }
 

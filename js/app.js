@@ -64,6 +64,15 @@ function generateUUID() {
     return 'id-' + Math.random().toString(36).substr(2, 9) + '-' + Date.now().toString(36);
 }
 
+function getVirtualToday() {
+    const realToday = new Date();
+    // Se o ano for 2026 e o mês for Junho (5 em JS)
+    if (realToday.getFullYear() === 2026 && realToday.getMonth() === 5) {
+        return realToday;
+    }
+    return new Date('2026-06-01T17:56:24-03:00');
+}
+
 // ==========================================================================
 // 2. AUTHENTICATION MODULE (Formerly auth.js)
 // ==========================================================================
@@ -136,7 +145,7 @@ function loadDemoData(username) {
         return; // Already has data
     }
 
-    const now = new Date('2026-06-01T17:56:24-03:00');
+    const now = getVirtualToday();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
 
@@ -456,7 +465,7 @@ function runOfflineParser(message) {
         let reply = '';
         
         // Detect Date in the message (ex: "dia 10", "dia 5", "amanhã")
-        const now = new Date('2026-06-01T17:56:24-03:00');
+        const now = getVirtualToday();
         const currentYear = now.getFullYear();
         const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
         let parsedDate = '';
@@ -576,7 +585,7 @@ function runOfflineParser(message) {
     }
 
     // 3. Heuristic Date/Category indicators
-    const now = new Date('2026-06-01T17:56:24-03:00');
+    const now = getVirtualToday();
     const currentYear = now.getFullYear();
     const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
     
@@ -701,7 +710,7 @@ async function runLocalLLM(message, settings) {
     const apiUrl = settings.aiUrl || 'http://localhost:11434';
     const model = settings.aiModel || 'llama3.1';
     
-    const now = new Date('2026-06-01T17:56:24-03:00');
+    const now = getVirtualToday();
     const currentDateStr = formatDate(now);
 
     const systemPrompt = `Você é o interpretador de linguagem natural da agenda inteligente "Delta".
@@ -724,14 +733,16 @@ Estrutura JSON:
 
 Diretrizes importantes:
 1. Se o usuario disser coisas como "Ola", "Oi", "Tudo bem?", "Como funciona?", retorne isSchedulingIntent = false, e escreva uma resposta amigavel no campo "reply".
-2. Se o usuario pedir para agendar (ex: "tenho prova dia 20" ou "consulta medica amanha"), retorne isSchedulingIntent = true, e extraia os campos title, date e category corretamente.
-3. Se a mensagem for vaga, sem sentido ou apenas texto aleatorio (ex: "teste", "asd"), retorne isSchedulingIntent = false, e escreva no "reply" que nao entendeu e instrua amigavelmente como agendar.`;
+2. Se o usuario pedir para agendar, retorne isSchedulingIntent = true, e extraia os campos corretamente.
+3. A data extraída DEVE corresponder à data especificada pelo usuário na sua mensagem (ex: se ele disser "dia 11", calcule e retorne a data correspondente para o dia 11 do mês atual, ou seja, "${currentDateStr.substring(0, 8)}11"). Nunca assuma a data padrão do exemplo (dia 20) a menos que o usuário tenha explicitamente solicitado o dia 20.
+4. Se a mensagem for vaga, sem sentido ou apenas texto aleatorio (ex: "teste", "asd"), retorne isSchedulingIntent = false, e escreva no "reply" que nao entendeu e instrua amigavelmente como agendar.`;
 
     try {
         let response;
         
         if (provider === 'ollama') {
             const endpoint = `${apiUrl.replace(/\/$/, '')}/api/generate`;
+            const fullPrompt = `${systemPrompt}\n\nMensagem do usuário para analisar:\n"${message}"`;
             
             response = await fetch(endpoint, {
                 method: 'POST',
@@ -741,7 +752,7 @@ Diretrizes importantes:
                 },
                 body: JSON.stringify({
                     model: model,
-                    prompt: systemPrompt,
+                    prompt: fullPrompt,
                     stream: false,
                     options: {
                         temperature: 0.1
@@ -767,7 +778,8 @@ Diretrizes importantes:
                 body: JSON.stringify({
                     model: model,
                     messages: [
-                        { role: 'user', content: systemPrompt }
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: message }
                     ],
                     temperature: 0.1,
                     response_format: { type: 'json_object' }
@@ -792,7 +804,7 @@ Diretrizes importantes:
 }
 
 function processLLMResult(parsed, originalMessage) {
-    const now = new Date('2026-06-01T17:56:24-03:00');
+    const now = getVirtualToday();
     const currentYear = now.getFullYear();
     const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
 
@@ -813,6 +825,15 @@ function processLLMResult(parsed, originalMessage) {
     let category = parsed.category || 'Outro';
     let prepDays = parseInt(parsed.prepDays) || 3;
     let studyContent = parsed.studyContent || '';
+
+    // Normalize placeholders like "Não especificado" or "Nenhum" to empty string
+    if (studyContent) {
+        const cleanContent = studyContent.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const placeholders = ['nao especificado', 'nenhum', 'vazio', 'n/a', 'nao', 'null', 'undefined', 'nao informado'];
+        if (placeholders.includes(cleanContent) || cleanContent === '') {
+            studyContent = '';
+        }
+    }
 
     const validCategories = ['Estudo', 'Trabalho', 'Consulta', 'Pessoal', 'Outro'];
     if (!validCategories.includes(category)) {
@@ -849,7 +870,14 @@ function processLLMResult(parsed, originalMessage) {
 }
 
 async function processMessage(message, settings = {}) {
-    if (chatContext.step !== 'idle') {
+    const text = message.toLowerCase().trim();
+    
+    // Se for ação de deletar/limpar ou de concluir/marcar feito, interceptamos
+    // para processar offline com 100% de acerto instantaneamente.
+    const isDeleteAction = text.includes('apagar') || text.includes('excluir') || text.includes('remover') || text.includes('limpar');
+    const isCompleteAction = text.includes('concluir') || text.includes('concluido') || text.includes('concluído') || text.includes('feito');
+
+    if (chatContext.step !== 'idle' || isDeleteAction || isCompleteAction) {
         return runOfflineParser(message);
     }
 
@@ -876,7 +904,7 @@ const MONTH_NAMES = [
 function initCalendar(username) {
     activeUser = username;
     
-    const baseDate = new Date('2026-06-01T17:56:24-03:00');
+    const baseDate = getVirtualToday();
     currentYear = baseDate.getFullYear();
     currentMonth = baseDate.getMonth();
     selectedDateStr = formatDate(baseDate);
@@ -914,7 +942,7 @@ function setupCalendarListeners() {
     });
 
     $('#today-btn').addEventListener('click', () => {
-        const today = new Date('2026-06-01T17:56:24-03:00');
+        const today = getVirtualToday();
         currentYear = today.getFullYear();
         currentMonth = today.getMonth();
         selectedDateStr = formatDate(today);
@@ -1019,7 +1047,7 @@ function createDayElement(dayNum, dateStr, isAdjacent, container, events) {
         dayDiv.classList.add('selected');
     }
 
-    if (dateStr === '2026-06-01') {
+    if (dateStr === formatDate(getVirtualToday())) {
         dayDiv.classList.add('today-marker');
     }
 
@@ -1436,7 +1464,7 @@ function renderDashboardStats() {
     });
     $('#stat-tasks-completed').textContent = completedCount;
 
-    const baseDate = new Date('2026-06-01T17:56:24-03:00');
+    const baseDate = getVirtualToday();
     let closestItem = null;
     let closestDiff = Infinity;
 
@@ -1585,18 +1613,91 @@ function executeChatAction(username, action) {
 
 function setupChatListeners() {
     const form = $('#chat-input-form');
-    const input = $('#chat-input');
-
     form.replaceWith(form.cloneNode(true));
     
-    $('#chat-input-form').addEventListener('submit', async (e) => {
+    const activeForm = $('#chat-input-form');
+    const activeInput = $('#chat-input');
+    const activeMicBtn = $('#chat-mic-btn');
+
+    // Configuração do Web Speech API para Transcrição de Voz
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+    let isRecording = false;
+
+    if (!SpeechRecognition) {
+        if (activeMicBtn) activeMicBtn.style.display = 'none';
+    } else {
+        recognition = new SpeechRecognition();
+        recognition.lang = 'pt-BR';
+        recognition.continuous = false;
+        recognition.interimResults = false;
+
+        recognition.onstart = () => {
+            isRecording = true;
+            activeMicBtn.classList.add('recording');
+            const icon = activeMicBtn.querySelector('i');
+            if (icon) icon.className = 'fa-solid fa-microphone-lines';
+            activeInput.placeholder = 'Ouvindo... fale agora.';
+        };
+
+        recognition.onresult = (event) => {
+            const transcript = event.results[0][0].transcript;
+            activeInput.value = transcript;
+            activeInput.focus();
+        };
+
+        recognition.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
+            stopRecognition();
+        };
+
+        recognition.onend = () => {
+            stopRecognition();
+        };
+
+        const stopRecognition = () => {
+            isRecording = false;
+            if (activeMicBtn) {
+                activeMicBtn.classList.remove('recording');
+                const icon = activeMicBtn.querySelector('i');
+                if (icon) icon.className = 'fa-solid fa-microphone';
+            }
+            if (activeInput) {
+                activeInput.placeholder = 'Escreva seu compromisso... (ex: Prova de matemática dia 20)';
+            }
+            try {
+                recognition.stop();
+            } catch (e) {}
+        };
+
+        activeMicBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (isRecording) {
+                stopRecognition();
+            } else {
+                try {
+                    recognition.start();
+                } catch (err) {
+                    console.error('Failed to start recognition:', err);
+                }
+            }
+        });
+    }
+    
+    activeForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const text = $('#chat-input').value.trim();
+        const text = activeInput.value.trim();
         if (!text) return;
+
+        if (isRecording && recognition) {
+            try {
+                recognition.stop();
+            } catch (err) {}
+        }
 
         chatHistory.push({ sender: 'user', text: text });
         renderChatMessages();
-        $('#chat-input').value = '';
+        activeInput.value = '';
 
         chatHistory.push({ sender: 'bot', text: '<span class="typing-indicator"><i class="fa-solid fa-circle animate-typing-1"></i><i class="fa-solid fa-circle animate-typing-2"></i><i class="fa-solid fa-circle animate-typing-3"></i> Pensando...</span>' });
         renderChatMessages();

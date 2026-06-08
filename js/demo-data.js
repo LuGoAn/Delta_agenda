@@ -4,8 +4,14 @@
 
 import { generateUUID } from './utils.js';
 
-// Get current year and month dynamically (June 2026 in this sandbox, but robust for any date)
-const now = new Date('2026-06-01T17:56:24-03:00');
+function getVirtualToday() {
+    const realToday = new Date();
+    if (realToday.getFullYear() === 2026 && realToday.getMonth() === 5) {
+        return realToday;
+    }
+    return new Date('2026-06-01T17:56:24-03:00');
+}
+const now = getVirtualToday();
 const year = now.getFullYear();
 const month = String(now.getMonth() + 1).padStart(2, '0');
 

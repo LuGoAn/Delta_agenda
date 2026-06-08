@@ -4,6 +4,14 @@
 
 import { formatDate, addDays } from './utils.js';
 
+function getVirtualToday() {
+    const realToday = new Date();
+    if (realToday.getFullYear() === 2026 && realToday.getMonth() === 5) {
+        return realToday;
+    }
+    return new Date('2026-06-01T17:56:24-03:00');
+}
+
 // Global chat context to maintain follow-up questions state
 let chatContext = {
     step: 'idle', // 'idle', 'awaiting_content', 'awaiting_prep_days'
@@ -72,7 +80,7 @@ function runOfflineParser(message) {
         let reply = '';
         
         // Detect Date in the message (ex: "dia 10", "dia 5", "amanhã")
-        const now = new Date('2026-06-01T17:56:24-03:00');
+        const now = getVirtualToday();
         const currentYear = now.getFullYear();
         const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
         let parsedDate = '';
@@ -192,7 +200,7 @@ function runOfflineParser(message) {
     }
 
     // Heuristic Date/Category indicators
-    const now = new Date('2026-06-01T17:56:24-03:00');
+    const now = getVirtualToday();
     const currentYear = now.getFullYear();
     const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
     
@@ -318,7 +326,7 @@ async function runLocalLLM(message, settings) {
     const apiUrl = settings.aiUrl || 'http://localhost:11434';
     const model = settings.aiModel || 'llama3.1';
     
-    const now = new Date('2026-06-01T17:56:24-03:00');
+    const now = getVirtualToday();
     const currentDateStr = formatDate(now);
 
     const systemPrompt = `Você é o interpretador de linguagem natural da agenda inteligente "Delta".
@@ -341,14 +349,16 @@ Estrutura JSON:
 
 Diretrizes importantes:
 1. Se o usuario disser coisas como "Ola", "Oi", "Tudo bem?", "Como funciona?", retorne isSchedulingIntent = false, e escreva uma resposta amigavel no campo "reply".
-2. Se o usuario pedir para agendar (ex: "tenho prova dia 20" ou "consulta medica amanha"), retorne isSchedulingIntent = true, e extraia os campos title, date e category corretamente.
-3. Se a mensagem for vaga, sem sentido ou apenas texto aleatorio (ex: "teste", "asd"), retorne isSchedulingIntent = false, e escreva no "reply" que nao entendeu e instrua amigavelmente como agendar.`;
+2. Se o usuario pedir para agendar, retorne isSchedulingIntent = true, e extraia os campos corretamente.
+3. A data extraída DEVE corresponder à data especificada pelo usuário na sua mensagem (ex: se ele disser "dia 11", calcule e retorne a data correspondente para o dia 11 do mês atual, ou seja, "${currentDateStr.substring(0, 8)}11"). Nunca assuma a data padrão do exemplo (dia 20) a menos que o usuário tenha explicitamente solicitado o dia 20.
+4. Se a mensagem for vaga, sem sentido ou apenas texto aleatorio (ex: "teste", "asd"), retorne isSchedulingIntent = false, e escreva no "reply" que nao entendeu e instrua amigavelmente como agendar.`;
 
     try {
         let response;
         
         if (provider === 'ollama') {
             const endpoint = `${apiUrl.replace(/\/$/, '')}/api/generate`;
+            const fullPrompt = `${systemPrompt}\n\nMensagem do usuário para analisar:\n"${message}"`;
             
             response = await fetch(endpoint, {
                 method: 'POST',
@@ -358,7 +368,7 @@ Diretrizes importantes:
                 },
                 body: JSON.stringify({
                     model: model,
-                    prompt: systemPrompt,
+                    prompt: fullPrompt,
                     stream: false,
                     options: {
                         temperature: 0.1
@@ -373,10 +383,9 @@ Diretrizes importantes:
             return processLLMResult(parsed, message);
             
         } else {
-            const endpoint = `${apiUrl.replace(/\/$/, '')}/v1/v1/chat/completions`; // fixed endpoint
-            const correctEndpoint = `${apiUrl.replace(/\/$/, '')}/v1/chat/completions`;
+            const endpoint = `${apiUrl.replace(/\/$/, '')}/v1/chat/completions`;
             
-            response = await fetch(correctEndpoint, {
+            response = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -385,7 +394,8 @@ Diretrizes importantes:
                 body: JSON.stringify({
                     model: model,
                     messages: [
-                        { role: 'user', content: systemPrompt }
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: message }
                     ],
                     temperature: 0.1,
                     response_format: { type: 'json_object' }
@@ -411,7 +421,7 @@ Diretrizes importantes:
 
 // Post-process the extracted parameters from LLM and format nicely
 function processLLMResult(parsed, originalMessage) {
-    const now = new Date('2026-06-01T17:56:24-03:00');
+    const now = getVirtualToday();
     const currentYear = now.getFullYear();
     const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
 
@@ -432,6 +442,15 @@ function processLLMResult(parsed, originalMessage) {
     let category = parsed.category || 'Outro';
     let prepDays = parseInt(parsed.prepDays) || 3;
     let studyContent = parsed.studyContent || '';
+
+    // Normalize placeholders like "Não especificado" or "Nenhum" to empty string
+    if (studyContent) {
+        const cleanContent = studyContent.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const placeholders = ['nao especificado', 'nenhum', 'vazio', 'n/a', 'nao', 'null', 'undefined', 'nao informado'];
+        if (placeholders.includes(cleanContent) || cleanContent === '') {
+            studyContent = '';
+        }
+    }
 
     const validCategories = ['Estudo', 'Trabalho', 'Consulta', 'Pessoal', 'Outro'];
     if (!validCategories.includes(category)) {
