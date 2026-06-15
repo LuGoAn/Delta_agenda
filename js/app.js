@@ -1505,7 +1505,7 @@ function initChatHistory() {
     chatHistory = [
         {
             sender: 'bot',
-            text: 'Olá! Sou seu Assistente Inteligente Delta. 🧠\n\nEscreva qualquer compromisso em linguagem natural e eu organizarei sua agenda automaticamente! \n\nExemplo:\n- "Tenho prova de matemática dia 20"\n- "Consulta médica dia 30"\n- "Preciso apresentar um projeto dia 10"'
+            text: 'Olá! Sou seu Assistente Inteligente Delta. 🧠\n\nEscreva qualquer compromisso e eu organizarei sua agenda automaticamente! \n\nExemplo:\n- "Tenho prova de matemática dia 20"\n- "Consulta médica dia 30"\n- "Preciso apresentar um projeto dia 10"'
         }
     ];
     renderChatMessages();
