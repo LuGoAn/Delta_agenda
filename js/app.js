@@ -1492,8 +1492,8 @@ function renderDashboardStats() {
     const nextActivitySpan = $('#stat-next-activity');
     if (closestItem) {
         nextActivitySpan.textContent = closestItem;
-        if (closestItem.length > 22) {
-            nextActivitySpan.textContent = closestItem.substring(0, 19) + '...';
+        if (closestItem.length > 45) {
+            nextActivitySpan.textContent = closestItem.substring(0, 42) + '...';
         }
         nextActivitySpan.title = closestItem;
     } else {
